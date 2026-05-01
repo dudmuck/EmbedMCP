@@ -478,7 +478,12 @@ static void on_message_received(const char *message, size_t length,
             mcp_session_t *session = mcp_session_manager_create_session(server->session_manager, NULL);
             if (session) {
                 mcp_connection_set_session_id(connection, mcp_session_get_id(session));
-                mcp_session_unref(session);
+                // BUG-FIX: do NOT unref here. create_session returned with
+                // ref_count=1 representing the manager's ownership; unref()
+                // would drop it to 0 and free the session struct, leaving a
+                // dangling pointer in manager->sessions[]. The next connect
+                // crashes when the iteration reads its session_id field.
+                // mcp_session_unref(session);
             }
         }
 
@@ -507,9 +512,19 @@ static void on_connection_opened(mcp_connection_t *connection, void *user_data) 
 
 static void on_connection_closed(mcp_connection_t *connection, void *user_data) {
     embed_mcp_server_t *server = (embed_mcp_server_t*)user_data;
-    
+
     if (server->debug) {
         mcp_log_info("Connection closed: %s", mcp_connection_get_id(connection));
+    }
+
+    // BUG-FIX: Without this, sessions created during initialize leak in the
+    // manager's sessions[] until session_timeout (3600s by default), and
+    // max_connections is hit after a handful of HTTP request cycles.
+    if (server->enable_sessions && server->session_manager) {
+        const char *sid = mcp_connection_get_session_id(connection);
+        if (sid) {
+            mcp_session_manager_remove_session(server->session_manager, sid);
+        }
     }
 }
 

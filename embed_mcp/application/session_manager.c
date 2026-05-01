@@ -278,7 +278,10 @@ mcp_session_t *mcp_session_manager_create_session(mcp_session_manager_t *manager
     // 检查会话是否已存在
     pthread_rwlock_rdlock(&manager->sessions_lock);
     for (size_t i = 0; i < manager->session_capacity; i++) {
-        if (manager->sessions[i] && 
+        // Defensive: mcp_session_unref() in embed_mcp.c can free a session
+        // struct without clearing this slot, leaving a dangling pointer.
+        // session_id may also be freed. Guard against NULL session_id.
+        if (manager->sessions[i] && manager->sessions[i]->session_id &&
             strcmp(manager->sessions[i]->session_id, id) == 0) {
             pthread_rwlock_unlock(&manager->sessions_lock);
             hal->memory.free(id);

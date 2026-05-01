@@ -147,6 +147,21 @@ static void http_request_handler(const mcp_hal_http_request_t* request,
                 data->transport->on_message(request->body, request->body_len, connection, data->transport->user_data);
             }
 
+            // BUG-FIX: this connection object is single-shot; the synchronous
+            // on_message has already triggered the response via send_impl, so
+            // nothing else will reference the connection after we return.
+            // Invoke the close callback (which removes the session from the
+            // manager) and free the connection. Without this, every HTTP
+            // request leaks a connection AND a session, and the session
+            // manager fills up after max_connections requests.
+            if (data->transport->on_connection_closed) {
+                data->transport->on_connection_closed(connection, data->transport->user_data);
+            }
+            if (connection->session_id) {
+                hal->memory.free(connection->session_id);
+            }
+            hal->memory.free(connection);
+
             // 延迟响应 - 不设置响应内容，等待send函数调用
             response->status_code = 0;  // 特殊标记表示延迟响应
             return;
