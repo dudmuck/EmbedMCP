@@ -152,6 +152,31 @@ static void linux_delay_us(uint32_t us) {
 static void hal_mongoose_event_handler(struct mg_connection *c, int ev, void *ev_data) {
     if (ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+
+        // Streamable HTTP: a GET on the MCP endpoint must upgrade to a
+        // text/event-stream response that the server can use to push
+        // notifications. Without this some clients (e.g. Claude Code)
+        // flag the connection as having no capabilities.  Minimal
+        // implementation: send the SSE preamble and keep the socket
+        // open; we don't currently push events from here, but the
+        // open stream alone satisfies the handshake.
+        if (hm->method.len == 3 && memcmp(hm->method.buf, "GET", 3) == 0) {
+            mg_printf(c,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/event-stream\r\n"
+                "Cache-Control: no-cache, no-transform\r\n"
+                "Connection: keep-alive\r\n"
+                "Access-Control-Allow-Origin: *\r\n"
+                "Access-Control-Allow-Headers: Content-Type, Authorization, MCP-Session-Id, MCP-Protocol-Version\r\n"
+                "MCP-Protocol-Version: 2025-11-25\r\n"
+                "\r\n");
+            mg_send(c, ": stream open\n\n", 15);
+            // Tell mongoose this response is "in progress and streaming"
+            // so it doesn't try to wrap subsequent reads as new requests.
+            c->is_resp = 1;
+            return;
+        }
+
         mcp_hal_http_handler_t handler = (mcp_hal_http_handler_t)c->fn_data;
         void* user_data = c->mgr->userdata;
 

@@ -786,9 +786,16 @@ int embed_mcp_run(embed_mcp_server_t *server, embed_mcp_transport_t transport) {
         return -1;
     }
 
-    // Setup signal handling
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    // BUG-FIX: don't grab SIGINT/SIGTERM here. A library has no business
+    // overriding the host application's signal handling -- the library
+    // handler only sets g_running=0, which doesn't actually unblock any
+    // thread, so plain `kill` against an embedding process becomes a no-op
+    // (had to use kill -9). The host application can install its own
+    // handlers if it wants graceful shutdown.
+    //
+    // signal(SIGINT, signal_handler);
+    // signal(SIGTERM, signal_handler);
+    (void) signal_handler;  // keep referenced to avoid -Wunused-function
 
     server->running = 1;
 
