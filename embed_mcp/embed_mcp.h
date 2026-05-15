@@ -16,6 +16,11 @@
 // Resource interface for templates
 #include "tools/resource_interface.h"
 
+// Transport interface -- needed by embed_mcp_attach_transport for callers
+// that create their own transport (e.g. bare-UART on STM32) and want to
+// drive the server from a non-blocking main loop instead of embed_mcp_run().
+#include "transport/transport_interface.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -617,6 +622,46 @@ int embed_mcp_add_tool_with_schema(embed_mcp_server_t *server,
  * @return 0 on success, -1 on error
  */
 int embed_mcp_run(embed_mcp_server_t *server, embed_mcp_transport_t transport);
+
+/**
+ * Attach a caller-created transport to the server.
+ *
+ * Use this when you have created a transport directly (e.g. via
+ * mcp_transport_create_bare_uart()) and want to drive the server from
+ * a non-blocking main loop, instead of letting embed_mcp_run() pick
+ * one of the two built-in transports. The server takes ownership of
+ * the transport pointer; embed_mcp_destroy() will dispose of it.
+ *
+ * Wires the server's message / connection / error callbacks onto the
+ * transport but does NOT start it -- follow up with embed_mcp_start().
+ *
+ * @param server    Server instance.
+ * @param transport Transport created by the caller. Must not be NULL.
+ *                  Must not already be attached to another server.
+ * @return 0 on success, -1 if the server already has a transport
+ *         attached or arguments are invalid.
+ */
+int embed_mcp_attach_transport(embed_mcp_server_t *server,
+                               mcp_transport_t *transport);
+
+/**
+ * Start a server with a previously-attached transport.
+ *
+ * Starts the session manager (if enabled), starts the transport, and
+ * marks the server running. Does NOT enter a blocking loop -- the
+ * caller is responsible for polling its transport (for the bare-UART
+ * transport: call mcp_bare_uart_transport_poll() from your main loop;
+ * for the HTTP transport: call mcp_http_transport_poll()).
+ *
+ * Call exactly once per attached transport, after
+ * embed_mcp_attach_transport(). Use embed_mcp_destroy() to tear down
+ * (which calls the transport's stop() and cleanup()).
+ *
+ * @param server Server instance with a transport attached.
+ * @return 0 on success, -1 on error (no transport attached, transport
+ *         already started, or backend start failed).
+ */
+int embed_mcp_start(embed_mcp_server_t *server);
 
 /**
  * Stop the running server

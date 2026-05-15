@@ -8,7 +8,8 @@
 // Transport types
 typedef enum {
     MCP_TRANSPORT_STDIO,
-    MCP_TRANSPORT_HTTP
+    MCP_TRANSPORT_HTTP,
+    MCP_TRANSPORT_BARE_UART   // bare-metal UART (see bare_uart_transport.h)
 } mcp_transport_type_t;
 
 // Transport states

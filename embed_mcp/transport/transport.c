@@ -336,6 +336,7 @@ const char *mcp_transport_type_to_string(mcp_transport_type_t type) {
     switch (type) {
         case MCP_TRANSPORT_STDIO: return "STDIO";
         case MCP_TRANSPORT_HTTP: return "HTTP";
+        case MCP_TRANSPORT_BARE_UART: return "BARE_UART";
         default: return "UNKNOWN";
     }
 }

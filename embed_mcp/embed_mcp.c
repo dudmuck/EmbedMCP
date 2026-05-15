@@ -744,95 +744,117 @@ void embed_mcp_destroy(embed_mcp_server_t *server) {
 
 
 
+int embed_mcp_attach_transport(embed_mcp_server_t *server,
+                               mcp_transport_t *transport) {
+    if (!server || !transport) {
+        set_error("Invalid arguments");
+        return -1;
+    }
+    if (server->transport) {
+        set_error("Server already has a transport attached");
+        return -1;
+    }
+
+    server->transport = transport;
+    mcp_transport_set_callbacks(transport,
+                                on_message_received,
+                                on_connection_opened,
+                                on_connection_closed,
+                                on_transport_error,
+                                server);
+    return 0;
+}
+
+int embed_mcp_start(embed_mcp_server_t *server) {
+    if (!server) {
+        set_error("Invalid server");
+        return -1;
+    }
+    if (!server->transport) {
+        set_error("No transport attached -- call embed_mcp_attach_transport first");
+        return -1;
+    }
+
+    if (server->session_manager) {
+        if (mcp_session_manager_start(server->session_manager) != 0) {
+            set_error("Failed to start session manager");
+            return -1;
+        }
+    }
+
+    if (mcp_transport_start(server->transport) != 0) {
+        if (server->session_manager) {
+            mcp_session_manager_stop(server->session_manager);
+        }
+        set_error("Failed to start transport");
+        return -1;
+    }
+
+    server->running = 1;
+
+    if (server->debug) {
+        mcp_log_info("Server '%s' v%s started on %s transport",
+                     server->name, server->version,
+                     mcp_transport_type_to_string(server->transport->type));
+    }
+    return 0;
+}
+
 int embed_mcp_run(embed_mcp_server_t *server, embed_mcp_transport_t transport) {
     if (!server) {
         set_error("Invalid server");
         return -1;
     }
 
-    // Create transport
+    /* Create one of the two built-in transports, attach it, and start. */
+    mcp_transport_t *t;
     if (transport == EMBED_MCP_TRANSPORT_STDIO) {
-        server->transport = mcp_transport_create_stdio();
+        t = mcp_transport_create_stdio();
     } else {
-        server->transport = mcp_transport_create_http_with_path(server->port, server->host, server->path);
+        t = mcp_transport_create_http_with_path(server->port, server->host, server->path);
     }
-
-    if (!server->transport) {
+    if (!t) {
         set_error("Failed to create transport");
         return -1;
     }
-
-    // Set transport callbacks
-    mcp_transport_set_callbacks(server->transport,
-                               on_message_received,
-                               on_connection_opened,
-                               on_connection_closed,
-                               on_transport_error,
-                               server);
-
-    // Start session manager if enabled
-    if (server->session_manager) {
-        if (mcp_session_manager_start(server->session_manager) != 0) {
-            mcp_transport_destroy(server->transport);
-            server->transport = NULL;
-            set_error("Failed to start session manager");
-            return -1;
-        }
+    if (embed_mcp_attach_transport(server, t) != 0) {
+        mcp_transport_destroy(t);
+        return -1;
     }
-
-    // Start transport
-    if (mcp_transport_start(server->transport) != 0) {
-        set_error("Failed to start transport");
+    if (embed_mcp_start(server) != 0) {
+        /* server now owns t; cleanup will happen in embed_mcp_destroy. */
         return -1;
     }
 
-    // BUG-FIX: don't grab SIGINT/SIGTERM here. A library has no business
-    // overriding the host application's signal handling -- the library
-    // handler only sets g_running=0, which doesn't actually unblock any
-    // thread, so plain `kill` against an embedding process becomes a no-op
-    // (had to use kill -9). The host application can install its own
-    // handlers if it wants graceful shutdown.
-    //
-    // signal(SIGINT, signal_handler);
-    // signal(SIGTERM, signal_handler);
-    (void) signal_handler;  // keep referenced to avoid -Wunused-function
+    /* BUG-FIX: don't grab SIGINT/SIGTERM here. A library has no business
+     * overriding the host application's signal handling -- the library
+     * handler only sets g_running=0, which doesn't actually unblock any
+     * thread, so plain `kill` against an embedding process becomes a no-op
+     * (had to use kill -9). The host application can install its own
+     * handlers if it wants graceful shutdown.
+     *
+     * signal(SIGINT, signal_handler);
+     * signal(SIGTERM, signal_handler); */
+    (void) signal_handler;  /* keep referenced to avoid -Wunused-function */
 
-    server->running = 1;
-
-    if (server->debug) {
-        const char *transport_name = (transport == EMBED_MCP_TRANSPORT_STDIO) ? "STDIO" : "HTTP";
-        if (transport == EMBED_MCP_TRANSPORT_HTTP) {
-            mcp_log_info("%s Server '%s' v%s started on %s:%d",
-                        transport_name, server->name, server->version, server->host, server->port);
-        } else {
-            mcp_log_info("%s Server '%s' v%s started",
-                        transport_name, server->name, server->version);
-        }
-    }
-
-    // Main loop
+    /* Blocking main loop -- only used by embed_mcp_run callers. STM32
+     * targets bypass this entirely by driving mcp_*_transport_poll()
+     * from their own main loop after embed_mcp_start(). */
     while (g_running && server->running) {
-        // Poll transport for HTTP requests
-        if (server->transport && transport == EMBED_MCP_TRANSPORT_HTTP) {
+        if (transport == EMBED_MCP_TRANSPORT_HTTP) {
             extern int mcp_http_transport_poll(mcp_transport_t *transport);
             mcp_http_transport_poll(server->transport);
         }
-
-        usleep(10000); // 10ms
+        usleep(10000); /* 10 ms */
     }
 
-    // Stop transport
     mcp_transport_stop(server->transport);
-
-    // Stop session manager if enabled
     if (server->session_manager) {
         mcp_session_manager_stop(server->session_manager);
     }
-
     if (server->debug) {
         mcp_log_info("Server stopped");
     }
-
     return 0;
 }
 

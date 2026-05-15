@@ -4,7 +4,6 @@
 #include "tool_interface.h"
 #include <stdbool.h>
 #include <time.h>
-#include <pthread.h>
 #include "cjson/cJSON.h"
 
 // Forward declarations
@@ -49,9 +48,13 @@ struct mcp_tool_registry {
     mcp_tool_entry_t *tools;
     size_t tool_count;
     
-    // Thread safety
-    pthread_rwlock_t tools_lock;
-    pthread_mutex_t registry_mutex;
+    // Thread safety -- opaque HAL mutex handle (see mcp_platform_hal_t.sync).
+    // Was a pthread_rwlock_t in upstream; downgraded to a plain mutex since
+    // MCP server message dispatch is sequential (one reader per transport),
+    // so rwlock parallelism was never exercised. Plain mutex also lets the
+    // bare-metal/RTOS HALs implement this with their native primitive
+    // (or a no-op on single-threaded targets).
+    void *tools_lock;
     
     // Statistics
     size_t total_tools_registered;
