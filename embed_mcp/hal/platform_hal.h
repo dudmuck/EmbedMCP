@@ -5,11 +5,18 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-// Platform type detection
-#if defined(FREERTOS)
+// Platform type detection.
+//   MCP_PLATFORM_BARE_METAL  -- explicitly set by the build (e.g. STM32 Nucleo
+//                               with no RTOS); single-threaded cooperative,
+//                               stdio over UART, no HTTP/mongoose.
+//   MCP_PLATFORM_FREERTOS    -- FreeRTOS-targeted build.
+//   MCP_PLATFORM_LINUX       -- default fallback for Linux / macOS / POSIX.
+#if defined(MCP_PLATFORM_BARE_METAL)
+    /* caller-provided */
+#elif defined(FREERTOS)
     #define MCP_PLATFORM_FREERTOS
 #else
-    #define MCP_PLATFORM_LINUX  // Default to Linux HAL (for Linux/macOS/POSIX systems)
+    #define MCP_PLATFORM_LINUX
 #endif
 
 // Platform capabilities description
