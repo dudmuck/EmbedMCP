@@ -27,6 +27,14 @@ struct mcp_tool {
     // Schema definition
     cJSON *input_schema;
     cJSON *output_schema;
+
+    // Optional borrowed JSON-encoded input schema string. When non-NULL the
+    // tool/list response emits this verbatim via cJSON_CreateRaw instead of
+    // re-Duplicating input_schema, which avoids retaining a parsed cJSON tree
+    // per tool. The pointer is BORROWED (not freed by mcp_tool_destroy); the
+    // caller guarantees it lives for the tool's lifetime (typically a static
+    // string literal in flash).
+    const char *schema_json;
     
     // Function pointers
     mcp_tool_execute_func_t execute;
@@ -68,6 +76,15 @@ mcp_tool_t *mcp_tool_create_full(const char *name,
                                 mcp_tool_validate_func_t validate_func,
                                 mcp_tool_cleanup_func_t cleanup_func,
                                 void *user_data);
+
+// Like mcp_tool_create but stores the input schema as a BORROWED JSON string
+// pointer instead of a parsed/duplicated cJSON tree. Caller must guarantee
+// schema_json lives for the tool's lifetime (string literals in flash are the
+// intended use). The tool's input_schema field is left NULL.
+mcp_tool_t *mcp_tool_create_with_schema_json(const char *name,
+                                             const char *description,
+                                             const char *schema_json,
+                                             mcp_tool_execute_func_t execute_func);
 
 void mcp_tool_destroy(mcp_tool_t *tool);
 

@@ -138,6 +138,7 @@ mcp_tool_t *mcp_tool_create_full(const char *name,
     
     tool->input_schema = input_schema ? cJSON_Duplicate(input_schema, 1) : NULL;
     tool->output_schema = output_schema ? cJSON_Duplicate(output_schema, 1) : NULL;
+    tool->schema_json = NULL;  // not used by this constructor
     
     tool->execute = execute_func;
     tool->validate = validate_func;
@@ -159,7 +160,50 @@ mcp_tool_t *mcp_tool_create_full(const char *name,
         mcp_tool_destroy(tool);
         return NULL;
     }
-    
+
+    return tool;
+}
+
+mcp_tool_t *mcp_tool_create_with_schema_json(const char *name,
+                                             const char *description,
+                                             const char *schema_json,
+                                             mcp_tool_execute_func_t execute_func) {
+    if (!name || !execute_func) return NULL;
+
+    mcp_tool_t *tool = calloc(1, sizeof(mcp_tool_t));
+    if (!tool) return NULL;
+
+    tool->name = strdup(name);
+    tool->title = strdup(name);
+    tool->description = description ? strdup(description) : strdup("");
+
+    // KEY DIFFERENCE vs mcp_tool_create_full: do NOT parse + Duplicate a cJSON
+    // tree; just borrow the caller's JSON string pointer.
+    tool->input_schema = NULL;
+    tool->output_schema = NULL;
+    tool->schema_json = schema_json;  // borrowed; lifetime managed by caller
+
+    tool->execute = execute_func;
+    tool->validate = NULL;
+    tool->cleanup = NULL;
+    tool->user_data = NULL;
+
+    tool->version = NULL;
+    tool->author = NULL;
+    tool->category = strdup(MCP_TOOL_CATEGORY_GENERAL);
+    tool->is_async = false;
+    tool->is_dangerous = false;
+
+    tool->max_execution_time_ms = 30000;
+    tool->max_memory_usage_bytes = 1024 * 1024;
+
+    tool->ref_count = 1;
+
+    if (!tool->name || !tool->title || !tool->description || !tool->category) {
+        mcp_tool_destroy(tool);
+        return NULL;
+    }
+
     return tool;
 }
 
@@ -353,10 +397,12 @@ cJSON *mcp_tool_to_json(const mcp_tool_t *tool) {
     cJSON_AddStringToObject(json, "title", tool->title);
     cJSON_AddStringToObject(json, "description", tool->description);
     
-    if (tool->input_schema) {
+    if (tool->schema_json) {
+        cJSON_AddItemToObject(json, "inputSchema", cJSON_CreateRaw(tool->schema_json));
+    } else if (tool->input_schema) {
         cJSON_AddItemToObject(json, "inputSchema", cJSON_Duplicate(tool->input_schema, 1));
     }
-    
+
     if (tool->output_schema) {
         cJSON_AddItemToObject(json, "outputSchema", cJSON_Duplicate(tool->output_schema, 1));
     }
@@ -381,22 +427,29 @@ cJSON *mcp_tool_to_json(const mcp_tool_t *tool) {
 
 cJSON *mcp_tool_to_mcp_tool_definition(const mcp_tool_t *tool) {
     if (!tool) return NULL;
-    
+
     cJSON *json = cJSON_CreateObject();
     if (!json) return NULL;
-    
+
     cJSON_AddStringToObject(json, "name", tool->name);
-    
+
     if (tool->title && strcmp(tool->title, tool->name) != 0) {
         cJSON_AddStringToObject(json, "title", tool->title);
     }
-    
+
     cJSON_AddStringToObject(json, "description", tool->description);
-    
-    if (tool->input_schema) {
+
+    // Prefer the borrowed JSON-encoded schema (flash literal): emit it
+    // verbatim via cJSON_CreateRaw so we don't have to keep a parsed cJSON
+    // tree around per tool. cJSON_CreateRaw does internally strdup the
+    // string, but that copy is transient -- freed when this response tree
+    // is cJSON_Delete()d.
+    if (tool->schema_json) {
+        cJSON_AddItemToObject(json, "inputSchema", cJSON_CreateRaw(tool->schema_json));
+    } else if (tool->input_schema) {
         cJSON_AddItemToObject(json, "inputSchema", cJSON_Duplicate(tool->input_schema, 1));
     }
-    
+
     return json;
 }
 

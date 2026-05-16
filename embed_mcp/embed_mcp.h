@@ -612,6 +612,33 @@ int embed_mcp_add_tool_with_schema(embed_mcp_server_t *server,
                                    const cJSON *schema,
                                    embed_mcp_tool_handler_t handler);
 
+/**
+ * Add a tool with a borrowed JSON-encoded input schema (heap-savings variant).
+ *
+ * Mirrors embed_mcp_add_tool_with_schema, but takes the input schema as a
+ * borrowed JSON string instead of a parsed cJSON tree. The string is NOT
+ * copied; the caller guarantees it lives for the tool's lifetime. This is
+ * intended for static string literals stored in flash on memory-constrained
+ * targets where keeping a parsed cJSON copy of every tool's schema in heap
+ * is wasteful.
+ *
+ * At tools/list time, the JSON string is emitted verbatim via
+ * cJSON_CreateRaw rather than re-Duplicating a tree.
+ *
+ * @param server      Server instance
+ * @param name        Tool name (must be unique)
+ * @param description Tool description
+ * @param schema_json JSON-encoded input schema; BORROWED pointer, must
+ *                    outlive the tool/server
+ * @param handler     Tool handler function receiving raw cJSON args
+ * @return 0 on success, -1 on error
+ */
+int embed_mcp_add_tool_with_schema_json(embed_mcp_server_t *server,
+                                        const char *name,
+                                        const char *description,
+                                        const char *schema_json,
+                                        embed_mcp_tool_handler_t handler);
+
 
 
 /**

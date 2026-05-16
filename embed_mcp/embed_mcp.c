@@ -1637,3 +1637,48 @@ int embed_mcp_add_tool_with_schema(embed_mcp_server_t *server,
                                   "Failed to create tool with schema",
                                   "Failed to register schema tool");
 }
+
+int embed_mcp_add_tool_with_schema_json(embed_mcp_server_t *server,
+                                        const char *name,
+                                        const char *description,
+                                        const char *schema_json,
+                                        embed_mcp_tool_handler_t handler) {
+    if (!name || !description || !handler) {
+        return fail_with_error("Invalid parameters: name, description, and handler are required");
+    }
+    if (!server || !server->tool_registry) {
+        return fail_with_error("Invalid server or tool registry not initialized");
+    }
+
+    schema_handler_data_t *handler_data = malloc(sizeof(schema_handler_data_t));
+    if (!handler_data) {
+        return fail_with_error("Memory allocation failed");
+    }
+    handler_data->handler = handler;
+
+    // Build the tool with a BORROWED schema pointer -- no cJSON_Parse, no
+    // cJSON_Duplicate, no per-tool parsed tree retained on the heap.
+    mcp_tool_t *tool = mcp_tool_create_with_schema_json(name,
+                                                       description,
+                                                       schema_json,
+                                                       schema_handler_wrapper);
+    if (!tool) {
+        free(handler_data);
+        return fail_with_error("Failed to create tool with schema_json");
+    }
+
+    // Attach the schema-handler user_data + cleanup. mcp_tool_create_with_schema_json
+    // intentionally left these NULL; we set them here so the wrapper callback
+    // can find the handler at execute time and so destroy() will free it.
+    tool->user_data = handler_data;
+    tool->cleanup = schema_handler_cleanup;
+
+    if (mcp_tool_registry_register_tool(server->tool_registry, tool) != 0) {
+        // mcp_tool_destroy will invoke schema_handler_cleanup on handler_data.
+        mcp_tool_destroy(tool);
+        return fail_with_error("Failed to register schema_json tool");
+    }
+
+    update_dynamic_capabilities(server);
+    return 0;
+}
