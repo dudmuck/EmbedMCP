@@ -2,8 +2,18 @@
 #define MCP_STDIO_TRANSPORT_H
 
 #include "transport_interface.h"
+#include "hal/platform_hal.h"
 #include <stdio.h>
+#ifdef MCP_PLATFORM_BARE_METAL
+/* Bare-metal: the stdio transport is not compiled (POSIX threading +
+ * retargeted FILE* streams aren't available). transport.c still includes
+ * this header for the type declarations; provide opaque pthread stand-ins
+ * so the struct definition below remains parseable. */
+typedef int pthread_t;
+typedef struct { int _opaque; } pthread_mutex_t;
+#else
 #include <pthread.h>
+#endif
 
 // STDIO transport specific structures
 typedef struct {

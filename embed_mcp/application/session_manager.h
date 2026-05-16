@@ -4,7 +4,19 @@
 #include "protocol/protocol_state.h"
 #include <stdbool.h>
 #include <time.h>
+#include "hal/platform_hal.h"   /* MCP_PLATFORM_BARE_METAL / MCP_PLATFORM_LINUX */
+#ifdef MCP_PLATFORM_BARE_METAL
+/* No pthread on bare-metal. The session manager itself is not compiled into
+ * the bare-metal build (it requires threads + RW locks), but embed_mcp.c
+ * pulls in this header for the manager-pointer-only forward declarations.
+ * Use opaque dummy types so the structs lay out, the actual fields are
+ * never touched on bare-metal because server->enable_sessions is 0 there. */
+typedef struct { int _opaque; } pthread_mutex_t;
+typedef struct { int _opaque; } pthread_rwlock_t;
+typedef int pthread_t;
+#else
 #include <pthread.h>
+#endif
 #include "cjson/cJSON.h"
 
 // Forward declarations

@@ -591,7 +591,14 @@ embed_mcp_server_t *embed_mcp_create(const embed_mcp_config_t *config) {
     // Multi-session configuration
     server->max_connections = config->max_connections > 0 ? config->max_connections : 10;
     server->session_timeout = config->session_timeout > 0 ? config->session_timeout : 3600;
+    /* Bare-metal builds honor enable_sessions=0 verbatim - they cannot link
+     * the session manager (pthread-dependent). On Linux the historical
+     * coercion "0 means default = 1" stands for backwards compatibility. */
+#ifdef MCP_PLATFORM_BARE_METAL
+    server->enable_sessions = config->enable_sessions;
+#else
     server->enable_sessions = config->enable_sessions != 0 ? config->enable_sessions : 1;
+#endif
     server->auto_cleanup = config->auto_cleanup != 0 ? config->auto_cleanup : 1;
 
     // This check was moved earlier in the function

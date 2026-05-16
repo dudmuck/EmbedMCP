@@ -1,7 +1,12 @@
 #include "transport/transport_interface.h"
+#include "hal/platform_hal.h"
+#ifndef MCP_PLATFORM_BARE_METAL
+/* The stdio + HTTP transports are POSIX/mongoose-only. Bare-metal callers
+ * use mcp_transport_create_bare_uart() (in bare_uart_transport.c) and never
+ * go through the type-dispatched factory below. */
 #include "transport/stdio_transport.h"
 #include "transport/http_transport.h"
-#include "hal/platform_hal.h"
+#endif
 #include "hal/hal_common.h"
 #include "utils/logging.h"
 #include <stdlib.h>
@@ -16,7 +21,7 @@ mcp_transport_t *mcp_transport_create(mcp_transport_type_t type) {
     mcp_transport_t *transport = hal->memory.alloc(sizeof(mcp_transport_t));
     if (!transport) return NULL;
     memset(transport, 0, sizeof(mcp_transport_t));
-    
+
     transport->type = type;
     transport->state = MCP_TRANSPORT_STATE_STOPPED;
     transport->config = NULL;
@@ -26,39 +31,42 @@ mcp_transport_t *mcp_transport_create(mcp_transport_type_t type) {
     transport->connections_opened = 0;
     transport->connections_closed = 0;
     transport->started_time = 0;
-    
+
     // Set the appropriate interface
     switch (type) {
+#ifndef MCP_PLATFORM_BARE_METAL
         case MCP_TRANSPORT_STDIO:
             transport->interface = &mcp_stdio_transport_interface;
             break;
         case MCP_TRANSPORT_HTTP:
             transport->interface = &mcp_http_transport_interface;
             break;
+#endif
         default:
             hal->memory.free(transport);
             return NULL;
     }
-    
+
     return transport;
 }
 
+#ifndef MCP_PLATFORM_BARE_METAL
 mcp_transport_t *mcp_transport_create_stdio(void) {
     mcp_transport_t *transport = mcp_transport_create(MCP_TRANSPORT_STDIO);
     if (!transport) return NULL;
-    
+
     mcp_transport_config_t *config = mcp_transport_config_create_stdio();
     if (!config) {
         mcp_transport_destroy(transport);
         return NULL;
     }
-    
+
     if (mcp_transport_init(transport, config) != 0) {
         mcp_transport_config_destroy(config);
         mcp_transport_destroy(transport);
         return NULL;
     }
-    
+
     mcp_transport_config_destroy(config);
     return transport;
 }
@@ -112,6 +120,14 @@ mcp_transport_t *mcp_transport_create_http_with_path(int port, const char *bind_
     mcp_transport_config_destroy(config);
     return transport;
 }
+#else  /* MCP_PLATFORM_BARE_METAL: link-time stubs only */
+mcp_transport_t *mcp_transport_create_stdio(void) { return NULL; }
+mcp_transport_t *mcp_transport_create_http(int port, const char *bind_address)
+{ (void) port; (void) bind_address; return NULL; }
+mcp_transport_t *mcp_transport_create_http_with_path(int port, const char *bind_address,
+                                                     const char *endpoint_path)
+{ (void) port; (void) bind_address; (void) endpoint_path; return NULL; }
+#endif /* !MCP_PLATFORM_BARE_METAL : mcp_transport_create_stdio / _http / _http_with_path */
 
 
 

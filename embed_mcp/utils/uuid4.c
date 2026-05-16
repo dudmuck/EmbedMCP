@@ -139,6 +139,26 @@ void UUID4_PREFIX(seed)(uint64_t* state)
   *state = *state * 6364136223846793005u + (uintptr_t)UUID4_PREFIX(gen);
 }
 
+#elif defined(MCP_PLATFORM_BARE_METAL)
+
+/* Bare-metal seed: there is no PID/TID, and no monotonic clock guaranteed
+ * to be unique across reboots. The host provides smtc_modem_hal_get_time_in_ms
+ * (LBM HAL); we mix that with the address of the seed slot itself plus
+ * a private counter. Quality is "good enough" for MCP session IDs on a
+ * single-user MCU - not crypto. */
+
+#include <stdint.h>
+extern uint32_t smtc_modem_hal_get_time_in_ms(void);
+
+UUID4_FUNCSPEC
+void UUID4_PREFIX(seed)(uint64_t* state)
+{
+  static uint64_t state0 = 0;
+  uint64_t time_ms = (uint64_t) smtc_modem_hal_get_time_in_ms();
+  *state = state0++ + ((uintptr_t) state ^ time_ms);
+  *state = *state * 6364136223846793005u + (uintptr_t) UUID4_PREFIX(gen);
+}
+
 #else
 
 #error unsupported platform

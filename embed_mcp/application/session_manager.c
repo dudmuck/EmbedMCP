@@ -5,8 +5,34 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
+#ifdef MCP_PLATFORM_BARE_METAL
+/* Bare-metal stubs: the session manager is pthread/RW-lock heavy and not
+ * portable. On bare-metal the server is configured with enable_sessions=0
+ * (see embed_mcp.c) so these stubs are never invoked at runtime - they
+ * only need to provide link-time symbols for the few unguarded references
+ * elsewhere in embed_mcp.c / the wider tree. Every entry point returns
+ * NULL / 0 / void. */
+
+char *mcp_session_generate_id(void) { return NULL; }
+bool mcp_session_validate_id(const char *id) { (void) id; return false; }
+mcp_session_manager_config_t *mcp_session_manager_config_create_default(void) { return NULL; }
+void mcp_session_manager_config_destroy(mcp_session_manager_config_t *c) { (void) c; }
+mcp_session_manager_t *mcp_session_manager_create(const mcp_session_manager_config_t *c) { (void) c; return NULL; }
+void mcp_session_manager_destroy(mcp_session_manager_t *m) { (void) m; }
+int mcp_session_manager_start(mcp_session_manager_t *m) { (void) m; return -1; }
+int mcp_session_manager_stop(mcp_session_manager_t *m) { (void) m; return -1; }
+mcp_session_t *mcp_session_manager_create_session(mcp_session_manager_t *m, const char *id) { (void) m; (void) id; return NULL; }
+mcp_session_t *mcp_session_manager_get_session(mcp_session_manager_t *m, const char *id) { (void) m; (void) id; return NULL; }
+int mcp_session_manager_remove_session(mcp_session_manager_t *m, const char *id) { (void) m; (void) id; return -1; }
+const char *mcp_session_get_id(const mcp_session_t *s) { (void) s; return NULL; }
+mcp_session_t *mcp_session_ref(mcp_session_t *s) { (void) s; return NULL; }
+void mcp_session_unref(mcp_session_t *s) { (void) s; }
+int mcp_session_update_activity(mcp_session_t *s) { (void) s; return 0; }
+
+#else  /* Linux: full implementation below */
+
+#include <unistd.h>
 #include "utils/uuid4.h"
 
 // 生成会话ID - 使用UUID4
@@ -639,3 +665,5 @@ const char *mcp_session_state_to_string(mcp_session_state_t state) {
         default: return "UNKNOWN";
     }
 }
+
+#endif /* MCP_PLATFORM_BARE_METAL */

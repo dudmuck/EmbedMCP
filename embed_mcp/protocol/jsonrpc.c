@@ -112,9 +112,14 @@ char *jsonrpc_serialize_request(const mcp_request_t *request) {
         cJSON_AddItemToObject(json, JSONRPC_FIELD_PARAMS, cJSON_Duplicate(request->params, 1));
     }
     
-    char *json_string = cJSON_Print(json);
+    /* cJSON_PrintUnformatted skips pretty-print whitespace. Smaller output
+     * AND smaller peak (cJSON_Print does a doubling-realloc and can peak
+     * at ~2x final size during growth). Critical on the STM32 bare-metal
+     * build where the heap arena is 80 KB and tools/list responses can
+     * approach the wall under cJSON_Print. */
+    char *json_string = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
-    
+
     return json_string;
 }
 
@@ -138,9 +143,14 @@ char *jsonrpc_serialize_response(const mcp_response_t *response) {
         cJSON_AddItemToObject(json, JSONRPC_FIELD_ERROR, cJSON_Duplicate(response->error, 1));
     }
     
-    char *json_string = cJSON_Print(json);
+    /* cJSON_PrintUnformatted skips pretty-print whitespace. Smaller output
+     * AND smaller peak (cJSON_Print does a doubling-realloc and can peak
+     * at ~2x final size during growth). Critical on the STM32 bare-metal
+     * build where the heap arena is 80 KB and tools/list responses can
+     * approach the wall under cJSON_Print. */
+    char *json_string = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
-    
+
     return json_string;
 }
 
@@ -166,9 +176,14 @@ char *jsonrpc_serialize_error(cJSON *id, int code, const char *message, cJSON *d
     
     cJSON_AddItemToObject(json, JSONRPC_FIELD_ERROR, error_obj);
     
-    char *json_string = cJSON_Print(json);
+    /* cJSON_PrintUnformatted skips pretty-print whitespace. Smaller output
+     * AND smaller peak (cJSON_Print does a doubling-realloc and can peak
+     * at ~2x final size during growth). Critical on the STM32 bare-metal
+     * build where the heap arena is 80 KB and tools/list responses can
+     * approach the wall under cJSON_Print. */
+    char *json_string = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
-    
+
     return json_string;
 }
 
