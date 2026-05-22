@@ -168,7 +168,7 @@ static void hal_mongoose_event_handler(struct mg_connection *c, int ev, void *ev
                 "Connection: keep-alive\r\n"
                 "Access-Control-Allow-Origin: *\r\n"
                 "Access-Control-Allow-Headers: Content-Type, Authorization, MCP-Session-Id, MCP-Protocol-Version\r\n"
-                "MCP-Protocol-Version: 2025-11-25\r\n"
+                "MCP-Protocol-Version: 2025-06-18\r\n"
                 "\r\n");
             mg_send(c, ": stream open\n\n", 15);
             // Tell mongoose this response is "in progress and streaming"

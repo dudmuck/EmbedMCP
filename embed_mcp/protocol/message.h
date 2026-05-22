@@ -5,8 +5,12 @@
 #include <stddef.h>
 #include "cjson/cJSON.h"
 
-// MCP Protocol Version
-#define MCP_PROTOCOL_VERSION "2025-11-25"
+// MCP Protocol Version. Use the latest published spec date so strict
+// clients (e.g. mcp-inspector) accept the initialize handshake -- the
+// vendored "2025-11-25" date doesn't match any real spec revision and
+// caused mcp-inspector to reject the connection. Published spec dates
+// are 2024-11-05, 2025-03-26, and 2025-06-18.
+#define MCP_PROTOCOL_VERSION "2025-06-18"
 
 // JSON-RPC Error Codes
 #define JSONRPC_PARSE_ERROR     -32700
