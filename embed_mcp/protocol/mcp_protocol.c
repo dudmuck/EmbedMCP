@@ -268,6 +268,18 @@ int mcp_protocol_handle_request(mcp_protocol_t *protocol, const mcp_request_t *r
     if (result) {
         int send_result = mcp_protocol_send_response(protocol, request->id, result);
         cJSON_Delete(result);
+        if (send_result < 0) {
+            // BUG-FIX: send_response returns -1 with NOTHING on the wire when
+            // the response cannot be serialized (cJSON print OOM on a large
+            // result -- e.g. a radio_go_wait collect with many distinct
+            // entries on an 8 KB embedded heap). The client then waits
+            // forever for a reply that never comes, which presents as a
+            // "firmware hang". Free the big result first (done above), then
+            // send a small fixed-size error so the call fails fast instead.
+            send_result = mcp_protocol_send_internal_error(
+                protocol, request->id,
+                "response serialize/send failed (result too large?)");
+        }
         return send_result;
     } else {
         return mcp_protocol_send_internal_error(protocol, request->id, "Request handler returned null");

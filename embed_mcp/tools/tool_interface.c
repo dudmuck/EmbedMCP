@@ -753,10 +753,24 @@ cJSON *mcp_tool_create_success_result(cJSON *data) {
     cJSON_AddStringToObject(text_block, "type", "text");
 
     if (data) {
-        // Convert data to string representation
-        char *data_str = cJSON_Print(data);
-        cJSON_AddStringToObject(text_block, "text", data_str ? data_str : "{}");
+        // BUG-FIX (embedded peak memory): use the UNFORMATTED printer --
+        // pretty-printing inflates both the output string and cJSON's working
+        // buffer by ~40% for zero protocol value.  Also CHECK the text add:
+        // cJSON_AddStringToObject silently skips the field when its internal
+        // strdup fails, producing a well-formed response whose content[0] has
+        // no "text" -- clients schema-reject it (observed on STM32L476 when
+        // the malloc arena was starved).  Better to fail the whole result so
+        // the caller path emits a proper error.
+        char *data_str = cJSON_PrintUnformatted(data);
+        cJSON *text_item = cJSON_AddStringToObject(text_block, "text",
+                                                   data_str ? data_str : "{}");
         if (data_str) free(data_str);
+        if (text_item == NULL) {
+            cJSON_Delete(text_block);
+            cJSON_Delete(content);
+            cJSON_Delete(result);
+            return NULL;
+        }
     } else {
         cJSON_AddStringToObject(text_block, "text", "Success");
     }
@@ -764,10 +778,12 @@ cJSON *mcp_tool_create_success_result(cJSON *data) {
     cJSON_AddItemToArray(content, text_block);
     cJSON_AddItemToObject(result, "content", content);
 
-    // Add structured content if data provided
-    if (data) {
-        cJSON_AddItemToObject(result, "structuredContent", cJSON_Duplicate(data, 1));
-    }
+    // BUG-FIX (embedded peak memory): structuredContent used to carry
+    // cJSON_Duplicate(data) -- a full second copy of the result tree that
+    // also DOUBLES the serialized response (the same JSON already rides in
+    // content[0].text).  On small targets that duplicate was the difference
+    // between fitting in the malloc arena and OOM.  Omit it; MCP clients
+    // fall back to parsing content[0].text.
 
     cJSON_AddBoolToObject(result, "isError", false);
 
