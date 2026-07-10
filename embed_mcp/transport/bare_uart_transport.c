@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 #define DEFAULT_LINE_BUFFER_SIZE   4096u
 #define BARE_UART_CONNECTION_ID    "bare-uart-0"
@@ -372,7 +373,25 @@ mcp_bare_uart_transport_poll(mcp_transport_t *transport)
         }
         if (byte == '\n') {
             if (data->line_overflow) {
-                /* Drop the partial line silently. */
+                /* The line was too long for the buffer (already logged when
+                 * overflow began below). Reply with a JSON-RPC error instead
+                 * of just dropping it — an id-less request would otherwise
+                 * vanish with no response at all, and the client only learns
+                 * something went wrong when its own request eventually times
+                 * out. `id` is null per JSON-RPC 2.0 (we can't recover the
+                 * caller's id from data we discarded). */
+                if (data->connection) {
+                    static const char err_fmt[] =
+                        "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,"
+                        "\"message\":\"request too large (> %zu bytes), dropped\"}}";
+                    char err_line[128];
+                    int n = snprintf(err_line, sizeof(err_line), err_fmt,
+                                     data->line_buffer_capacity);
+                    if (n > 0) {
+                        bare_uart_send_impl(data->connection, err_line,
+                                            (size_t)((size_t)n < sizeof(err_line) ? n : sizeof(err_line) - 1));
+                    }
+                }
                 data->line_buffer_used = 0;
                 data->line_overflow    = 0;
                 continue;
