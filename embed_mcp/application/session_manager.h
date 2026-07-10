@@ -92,6 +92,11 @@ struct mcp_session_manager {
     
     // Cleanup thread
     pthread_t cleanup_thread;
+    void *cleanup_thread_handle;  /* opaque HAL handle (hal->thread.create's
+                                    * out-param) — join/free it via hal->thread.join,
+                                    * NOT raw pthread_join(cleanup_thread, ...): the
+                                    * HAL owns a heap-allocated pthread_t behind this
+                                    * pointer and frees it on join. */
     bool cleanup_running;
     
     // Statistics

@@ -241,7 +241,14 @@ int mcp_session_manager_start(mcp_session_manager_t *manager) {
         void *thread_handle;
         int thread_result = hal->thread.create(&thread_handle, session_cleanup_thread, manager, 0);
         if (thread_result == 0) {
-            manager->cleanup_thread = *(pthread_t*)&thread_handle;
+            /* thread_handle is a heap pointer TO a pthread_t (see
+             * linux_thread_create) — dereference the pointer itself, not the
+             * address of this local variable (that read back the pointer's
+             * own bit-pattern as a bogus "pthread_t", so the later join always
+             * failed with ESRCH and the heap pthread_t was never freed). Keep
+             * the raw handle too so stop() can join+free it via the HAL. */
+            manager->cleanup_thread = *(pthread_t*)thread_handle;
+            manager->cleanup_thread_handle = thread_handle;
         } else {
             manager->cleanup_running = false;
             pthread_mutex_unlock(&manager->manager_mutex);
@@ -268,13 +275,21 @@ int mcp_session_manager_stop(mcp_session_manager_t *manager) {
     }
     
     manager->cleanup_running = false;
+    void *thread_handle = manager->cleanup_thread_handle;
+    manager->cleanup_thread_handle = NULL;
     pthread_mutex_unlock(&manager->manager_mutex);
-    
-    // 等待清理线程结束
-    if (pthread_join(manager->cleanup_thread, NULL) != 0) {
-        mcp_log_warn("Failed to join session cleanup thread");
+
+    // 等待清理线程结束 — via the HAL (owns + frees the heap pthread_t behind
+    // thread_handle; raw pthread_join(manager->cleanup_thread, ...) here
+    // used to always fail — see the dereference fix in start() — and leaked
+    // that allocation every start/stop cycle.
+    if (thread_handle) {
+        const mcp_platform_hal_t *hal = mcp_platform_get_hal();
+        if (!hal || hal->thread.join(thread_handle) != 0) {
+            mcp_log_warn("Failed to join session cleanup thread");
+        }
     }
-    
+
     mcp_log_info("Session manager stopped");
     return 0;
 }

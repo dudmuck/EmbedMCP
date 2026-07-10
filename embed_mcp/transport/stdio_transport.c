@@ -211,14 +211,24 @@ int mcp_stdio_transport_setup_buffering(mcp_stdio_transport_data_t *data,
 void *mcp_stdio_transport_reader_thread(void *arg) {
     mcp_transport_t *transport = (mcp_transport_t*)arg;
     mcp_stdio_transport_data_t *data = (mcp_stdio_transport_data_t*)transport->private_data;
-    
+
     if (!data) return NULL;
-    
-    char line_buffer[8192];
-    
+
+    // Previously a fixed char[8192] regardless of the configured
+    // max_message_size (data->input_buffer/input_buffer_capacity, already
+    // allocated to the right size in mcp_stdio_transport_setup_buffering but
+    // unused here): a line >8191 B was silently truncated by fgets, and the
+    // remainder was then read as a bogus SEPARATE "line" on the next call,
+    // desyncing the line-based framing with no error. Use the real buffer,
+    // and on overflow drain-and-reject that line instead of dispatching a
+    // truncated fragment.
+    char *line_buffer = data->input_buffer;
+    size_t buffer_capacity = data->input_buffer_capacity;
+    if (!line_buffer || buffer_capacity == 0) return NULL;
+
     while (data->thread_running) {
         // Read line from input stream
-        if (fgets(line_buffer, sizeof(line_buffer), data->input_stream) == NULL) {
+        if (fgets(line_buffer, (int) buffer_capacity, data->input_stream) == NULL) {
             if (feof(data->input_stream)) {
                 // End of input
                 break;
@@ -229,20 +239,34 @@ void *mcp_stdio_transport_reader_thread(void *arg) {
             }
             continue;
         }
-        
+
         // Remove trailing newline
         size_t len = strlen(line_buffer);
         if (len > 0 && line_buffer[len - 1] == '\n') {
             line_buffer[len - 1] = '\0';
             len--;
+        } else if (len == buffer_capacity - 1) {
+            // Buffer filled with no newline: the line is longer than
+            // buffer_capacity. Drain the rest of it (so the next fgets
+            // starts at a real line boundary) and reply with a JSON-RPC
+            // error instead of processing the truncated fragment.
+            int c;
+            while ((c = fgetc(data->input_stream)) != EOF && c != '\n') { }
+            char err_line[128];
+            snprintf(err_line, sizeof(err_line),
+                     "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,"
+                     "\"message\":\"request too large (> %zu bytes), dropped\"}}",
+                     buffer_capacity - 1);
+            mcp_stdio_send_output_line(transport, err_line);
+            continue;
         }
-        
+
         // Process the line
         if (len > 0) {
             mcp_stdio_process_input_line(transport, line_buffer);
         }
     }
-    
+
     return NULL;
 }
 
