@@ -314,16 +314,24 @@ int mcp_http_transport_send_impl(mcp_connection_t *connection, const char *messa
     }
 
     char headers[1024];
-    int written = 0;
-    written += snprintf(headers + written, sizeof(headers) - (size_t)written,
-                        "Content-Type: application/json\r\n"
-                        "Access-Control-Allow-Origin: *\r\n"
-                        "Access-Control-Allow-Headers: Content-Type, Authorization, MCP-Session-Id, MCP-Protocol-Version\r\n"
-                        "MCP-Protocol-Version: %s\r\n",
-                        MCP_PROTOCOL_VERSION);
-    if (connection->session_id && connection->session_id[0] != '\0' && (size_t)written < sizeof(headers)) {
-        written += snprintf(headers + written, sizeof(headers) - (size_t)written,
-                            "MCP-Session-Id: %s\r\n", connection->session_id);
+    // snprintf returns the length it WOULD have written even when truncated,
+    // so a plain `written += snprintf(...)` can push `written` past
+    // sizeof(headers) — the guard below then (correctly) skips the
+    // MCP-Session-Id header, but only by luck of that overflow being caught;
+    // clamp explicitly so this is correct by construction, not by the fixed
+    // strings above always being short enough in practice.
+    size_t written = 0;
+    int n = snprintf(headers + written, sizeof(headers) - written,
+                     "Content-Type: application/json\r\n"
+                     "Access-Control-Allow-Origin: *\r\n"
+                     "Access-Control-Allow-Headers: Content-Type, Authorization, MCP-Session-Id, MCP-Protocol-Version\r\n"
+                     "MCP-Protocol-Version: %s\r\n",
+                     MCP_PROTOCOL_VERSION);
+    if (n > 0) written += ((size_t) n < sizeof(headers) - written) ? (size_t) n : sizeof(headers) - written - 1;
+    if (connection->session_id && connection->session_id[0] != '\0' && written < sizeof(headers) - 1) {
+        n = snprintf(headers + written, sizeof(headers) - written,
+                    "MCP-Session-Id: %s\r\n", connection->session_id);
+        if (n > 0) written += ((size_t) n < sizeof(headers) - written) ? (size_t) n : sizeof(headers) - written - 1;
     }
 
     // 构造HAL响应

@@ -56,6 +56,16 @@ size_t base64_encode(const unsigned char *src, size_t len, char *out, size_t out
     return encoded_len;
 }
 
+/* base64_decode_table has 128 entries (7-bit ASCII); a byte >= 0x80 is never
+ * valid base64 alphabet. src[i] is `char` (signed on most platforms), so a
+ * bare (int)src[i] on such a byte sign-extends to a NEGATIVE index (OOB
+ * before the table); casting through unsigned char alone would still index
+ * OOB past the end for 0x80..0xFF. Reject any non-7-bit byte before indexing. */
+static int base64_decode_lookup(char c) {
+    unsigned char uc = (unsigned char) c;
+    return (uc < 128) ? base64_decode_table[uc] : -1;
+}
+
 size_t base64_decode(const char *src, size_t len, unsigned char *out, size_t out_len) {
     if (len % 4 != 0) return 0;
 
@@ -64,10 +74,10 @@ size_t base64_decode(const char *src, size_t len, unsigned char *out, size_t out
 
     size_t i, j;
     for (i = 0, j = 0; i < len; i += 4, j += 3) {
-        int a = base64_decode_table[(int)src[i]];
-        int b = base64_decode_table[(int)src[i + 1]];
-        int c = (src[i + 2] == '=') ? 0 : base64_decode_table[(int)src[i + 2]];
-        int d = (src[i + 3] == '=') ? 0 : base64_decode_table[(int)src[i + 3]];
+        int a = base64_decode_lookup(src[i]);
+        int b = base64_decode_lookup(src[i + 1]);
+        int c = (src[i + 2] == '=') ? 0 : base64_decode_lookup(src[i + 2]);
+        int d = (src[i + 3] == '=') ? 0 : base64_decode_lookup(src[i + 3]);
 
         if (a == -1 || b == -1 || c == -1 || d == -1) return 0;
 
