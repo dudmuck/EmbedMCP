@@ -26,6 +26,11 @@ typedef struct {
     size_t   line_buffer_capacity;
     size_t   line_buffer_used;
     int      line_overflow;           /* drop bytes until next \n on overflow */
+    /* A complete line was assembled by mcp_bare_uart_transport_pump() and is
+     * waiting for the next poll() to dispatch it. pump() deliberately does not
+     * dispatch (see its comment in the header), so the line has to be parked
+     * somewhere; line_buffer[0..line_buffer_used) is it. */
+    int      line_ready;
 } mcp_bare_uart_transport_data_t;
 
 /* Per-connection private state (kept for symmetry with stdio transport). */
@@ -346,17 +351,20 @@ mcp_bare_uart_transport_set_io(mcp_transport_t *transport,
     return 0;
 }
 
-int
-mcp_bare_uart_transport_poll(mcp_transport_t *transport)
+/* ------------------------------------------------------------------------
+ * Shared byte drain for poll() and pump().
+ *
+ * `may_dispatch` is the only difference between the two:
+ *   1 (poll) -- a completed line is dispatched immediately and draining
+ *               continues, so several messages can be handled per call.
+ *   0 (pump) -- a completed line is parked (line_ready) and draining STOPS.
+ *               Nothing is dispatched and nothing is transmitted, which is
+ *               what makes pump() safe to call from inside a handler.
+ * ---------------------------------------------------------------------- */
+static int
+bare_uart_drain(mcp_transport_t *transport, int may_dispatch)
 {
     mcp_bare_uart_transport_data_t *data = get_data(transport);
-    if (!data || !data->io_valid) return 0;
-    if (transport->state != MCP_TRANSPORT_STATE_RUNNING &&
-        transport->state != MCP_TRANSPORT_STATE_STARTING) {
-        /* Caller may invoke poll() unconditionally even before start; just
-         * idle until the upper layer has flipped the state. */
-        if (!data->connection) return 0;
-    }
 
     int dispatched = 0;
     for (;;) {
@@ -372,6 +380,13 @@ mcp_bare_uart_transport_poll(mcp_transport_t *transport)
             continue;              /* tolerate CRLF terminators */
         }
         if (byte == '\n') {
+            if (!may_dispatch) {
+                /* pump(): park the completed line (or the overflow marker) and
+                 * stop. The next poll() reproduces the exact behaviour it
+                 * would have had if it had seen this newline itself. */
+                data->line_ready = 1;
+                return 1;
+            }
             if (data->line_overflow) {
                 /* The line was too long for the buffer (already logged when
                  * overflow began below). Reply with a JSON-RPC error instead
@@ -397,12 +412,22 @@ mcp_bare_uart_transport_poll(mcp_transport_t *transport)
                 continue;
             }
             data->line_buffer[data->line_buffer_used] = '\0';
-            if (data->line_buffer_used > 0) {
-                dispatch_line(transport, data->line_buffer,
-                              data->line_buffer_used);
+            size_t line_len = data->line_buffer_used;
+            /* Reset BEFORE dispatching, not after. A handler may block, and
+             * pump() runs during that block and appends into this same buffer
+             * — so if the reset happened afterwards it would wipe whatever
+             * pump() had absorbed, and the parked request would vanish with no
+             * response and no error. (Observed exactly that.)
+             *
+             * Safe because the raw line is dead by the time a handler blocks:
+             * mcp_protocol_handle_message() calls jsonrpc_parse_message() as
+             * its first action and works from the parsed message thereafter,
+             * so nothing reads `line` again once the handler is running. */
+            data->line_buffer_used = 0;
+            if (line_len > 0) {
+                dispatch_line(transport, data->line_buffer, line_len);
                 dispatched++;
             }
-            data->line_buffer_used = 0;
             continue;
         }
 
@@ -420,6 +445,83 @@ mcp_bare_uart_transport_poll(mcp_transport_t *transport)
         data->line_buffer[data->line_buffer_used++] = (char) byte;
     }
     return dispatched;
+}
+
+/* Dispatch a line parked by pump(), if any. Returns 1 if one was consumed. */
+static int
+bare_uart_flush_ready(mcp_transport_t *transport)
+{
+    mcp_bare_uart_transport_data_t *data = get_data(transport);
+    if (!data->line_ready) return 0;
+    data->line_ready = 0;
+
+    if (data->line_overflow) {
+        if (data->connection) {
+            static const char err_fmt[] =
+                "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,"
+                "\"message\":\"request too large (> %zu bytes), dropped\"}}";
+            char err_line[128];
+            int n = snprintf(err_line, sizeof(err_line), err_fmt,
+                             data->line_buffer_capacity);
+            if (n > 0) {
+                bare_uart_send_impl(data->connection, err_line,
+                                    (size_t)((size_t)n < sizeof(err_line) ? n : sizeof(err_line) - 1));
+            }
+        }
+        data->line_buffer_used = 0;
+        data->line_overflow    = 0;
+        return 0;
+    }
+
+    data->line_buffer[data->line_buffer_used] = '\0';
+    size_t line_len = data->line_buffer_used;
+    data->line_buffer_used = 0;      /* before dispatch — see the note in
+                                      * bare_uart_drain(); this handler can
+                                      * block and pump() again too. */
+    int dispatched = 0;
+    if (line_len > 0) {
+        dispatch_line(transport, data->line_buffer, line_len);
+        dispatched = 1;
+    }
+    return dispatched;
+}
+
+int
+mcp_bare_uart_transport_poll(mcp_transport_t *transport)
+{
+    mcp_bare_uart_transport_data_t *data = get_data(transport);
+    if (!data || !data->io_valid) return 0;
+    if (transport->state != MCP_TRANSPORT_STATE_RUNNING &&
+        transport->state != MCP_TRANSPORT_STATE_STARTING) {
+        /* Caller may invoke poll() unconditionally even before start; just
+         * idle until the upper layer has flipped the state. */
+        if (!data->connection) return 0;
+    }
+
+    /* A line parked by pump() must go out before we read anything new, or
+     * messages would be reordered. */
+    int dispatched = bare_uart_flush_ready(transport);
+
+    int rc = bare_uart_drain(transport, 1);
+    if (rc < 0) return rc;
+    return dispatched + rc;
+}
+
+int
+mcp_bare_uart_transport_pump(mcp_transport_t *transport)
+{
+    mcp_bare_uart_transport_data_t *data = get_data(transport);
+    if (!data || !data->io_valid) return 0;
+    if (transport->state != MCP_TRANSPORT_STATE_RUNNING &&
+        transport->state != MCP_TRANSPORT_STATE_STARTING) {
+        if (!data->connection) return 0;
+    }
+    /* Already holding a completed line: do not read further, or a second
+     * request would overwrite the first. The caller's blocking wait will end
+     * and poll() will drain the rest. */
+    if (data->line_ready) return 0;
+
+    return bare_uart_drain(transport, 0);
 }
 
 int

@@ -81,6 +81,37 @@ int mcp_bare_uart_transport_set_io(mcp_transport_t *transport,
  * state -- safe to call unconditionally. */
 int mcp_bare_uart_transport_poll(mcp_transport_t *transport);
 
+/* Drain-only pump — absorb bytes WITHOUT dispatching.
+ *
+ * Same byte loop as poll(), except that a completed line is parked rather than
+ * handed to on_message, and draining stops there. Nothing is dispatched and
+ * nothing is transmitted, so this is safe to call from *inside* a tool handler
+ * — which is the entire point of it.
+ *
+ * WHY THIS EXISTS. poll() invokes on_message synchronously, so a handler that
+ * blocks (waiting on a hardware interrupt, a long operation) stops the caller's
+ * RX buffer from being drained for the whole duration. Anything the client
+ * sends in that window is lost once the buffer fills: measured on a 115200
+ * link with a 1024-byte ISR ring, a 2103-byte request sent while a handler was
+ * blocked lost exactly 1079 bytes (= 2103 - 1024) and came back as a -32700
+ * parse error. Client-side chunking does not help, because with the drain
+ * stopped only the total volume during the stall matters, not the rate.
+ *
+ * Calling this from a blocking handler's wait loop raises the absorbable
+ * volume from the caller's ISR buffer to this transport's line buffer. Since a
+ * line longer than the line buffer is rejected by design, that is complete
+ * coverage for a single pipelined request: any request that could be accepted
+ * at all can now be absorbed, regardless of how long the handler blocks.
+ *
+ * Returns 1 if a complete line is now parked, 0 if it merely absorbed a partial
+ * line or had nothing to read, <0 on transport error. Calling it again while a
+ * line is already parked is a no-op returning 0 — a second concurrent request
+ * still needs poll() to run first, and would overflow otherwise.
+ *
+ * Ordering is preserved: the next poll() dispatches the parked line before
+ * reading any new bytes. */
+int mcp_bare_uart_transport_pump(mcp_transport_t *transport);
+
 /* Optional helper: emit a line via the configured tx callback. Same
  * convention as mcp_stdio_send_output_line: appends '\n'. Used
  * internally by the vtable's send() and exposed for callers that want
