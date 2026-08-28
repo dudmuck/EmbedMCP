@@ -361,6 +361,8 @@ mcp_bare_uart_transport_set_io(mcp_transport_t *transport,
  *               Nothing is dispatched and nothing is transmitted, which is
  *               what makes pump() safe to call from inside a handler.
  * ---------------------------------------------------------------------- */
+static int bare_uart_flush_ready(mcp_transport_t *transport);
+
 static int
 bare_uart_drain(mcp_transport_t *transport, int may_dispatch)
 {
@@ -368,6 +370,18 @@ bare_uart_drain(mcp_transport_t *transport, int may_dispatch)
 
     int dispatched = 0;
     for (;;) {
+        /* A pump() that ran while a handler was blocked -- dispatched either by
+         * flush_ready() just before this call, or from inside this very loop --
+         * may have parked a completed line. Flush it BEFORE reading further
+         * bytes: line_buffer_used points at the end of that parked line, so the
+         * next request's bytes would be appended to it and the two dispatched as
+         * one corrupt line, silently losing the parked request with nothing but
+         * a parse error to show for it. Only reachable with two requests
+         * pipelined behind one blocked handler. */
+        if (may_dispatch && data->line_ready) {
+            dispatched += bare_uart_flush_ready(transport);
+        }
+
         uint8_t byte = 0;
         int rc = data->io.rx_one_nonblocking(&byte, data->io.user);
         if (rc == 0) break;        /* nothing available */
